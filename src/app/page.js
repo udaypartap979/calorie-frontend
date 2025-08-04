@@ -364,11 +364,11 @@ export default function Home() {
                               </td>
                               <td className="px-6 py-4">
                                 <div className="text-sm text-gray-500">
-                                  <div><strong>Protein:</strong> {food.nutrition.protein}g</div>
-                                  <div><strong>Fat:</strong> {food.nutrition.fat}g</div>
-                                  <div><strong>Carbs:</strong> {food.nutrition.carbs}g</div>
-                                  <div><strong>Fiber:</strong> {food.nutrition.fiber}g</div>
-                                  <div><strong>Sugar:</strong> {food.nutrition.sugar}g</div>
+                                  <div><strong>Protein:</strong> {food?.nutrition?.protein}g</div>
+                                  <div><strong>Fat:</strong> {food?.nutrition?.fat}g</div>
+                                  <div><strong>Carbs:</strong> {food?.nutrition?.carbs}g</div>
+                                  <div><strong>Fiber:</strong> {food?.nutrition?.fiber}g</div>
+                                  <div><strong>Sugar:</strong> {food?.nutrition?.sugar}g</div>
                                 </div>
                               </td>
                             </tr>
