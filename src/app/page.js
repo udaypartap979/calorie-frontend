@@ -16,6 +16,9 @@ export default function Home() {
   const canvasRef = useRef(null);
   const fileInputRef = useRef(null);
 
+  // State to track the current camera facing mode
+  const [facingMode, setFacingMode] = useState("user"); // "user" for front, "environment" for rear
+
   const dataURLtoBlob = (dataurl) => {
     if (!dataurl) return null;
     const arr = dataurl.split(',');
@@ -91,15 +94,20 @@ export default function Home() {
     }
   };
 
-  const startCamera = async () => {
+  // Modified startCamera to accept a facing mode
+  const startCamera = async (mode) => {
     try {
       resetImages();
+      // Stop any existing stream before starting a new one
+      if (videoRef.current && videoRef.current.srcObject) {
+        videoRef.current.srcObject.getTracks().forEach(track => track.stop());
+      }
       setIsCamera(true);
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
-          width: { ideal: 640 },
-          height: { ideal: 480 },
-          facingMode: "user",
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          facingMode: mode,
         },
       });
       if (videoRef.current) {
@@ -111,6 +119,7 @@ export default function Home() {
     } catch (error) {
       console.error("Error accessing camera:", error);
       alert("Unable to access camera. Please check permissions and try again.");
+      setIsCamera(false);
     }
   };
 
@@ -123,6 +132,13 @@ export default function Home() {
     }
   };
 
+  // Function to switch between front and rear cameras
+  const handleSwitchCamera = () => {
+    const newFacingMode = facingMode === "user" ? "environment" : "user";
+    setFacingMode(newFacingMode);
+    startCamera(newFacingMode);
+  };
+
   const capturePhoto = () => {
     if (videoRef.current && canvasRef.current) {
       const canvas = canvasRef.current;
@@ -130,7 +146,13 @@ export default function Home() {
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       const ctx = canvas.getContext("2d");
-      ctx.drawImage(video, 0, 0);
+      // Flip the image horizontally if it's from the front camera
+      if (facingMode === 'user') {
+        ctx.scale(-1, 1);
+        ctx.drawImage(video, -canvas.width, 0, canvas.width, canvas.height);
+      } else {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      }
       const imageDataUrl = canvas.toDataURL("image/jpeg", 0.8);
       setCapturedImage(imageDataUrl);
       setUploadedImage(null);
@@ -175,7 +197,6 @@ export default function Home() {
           Sign in with Google
         </button>
       ) : (
-        // Changed max-w-2xl to max-w-5xl to give the table more space
         <div className="w-full max-w-5xl"> 
           <div className="text-center mb-8">
             <p className="text-xl mb-4 text-gray-700">Welcome, {user.displayName}!</p>
@@ -191,7 +212,7 @@ export default function Home() {
             <div className="flex flex-wrap gap-4 justify-center">
               {!isCamera && (
                 <button
-                  onClick={startCamera}
+                  onClick={() => startCamera(facingMode)}
                   className="px-6 py-3 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors flex items-center gap-2"
                 >
                   📷 Open Camera
@@ -232,6 +253,7 @@ export default function Home() {
                       maxWidth: "500px",
                       height: "auto",
                       display: "block",
+                      transform: facingMode === 'user' ? 'scaleX(-1)' : 'scaleX(1)',
                     }}
                     className="mx-auto"
                   />
@@ -239,12 +261,21 @@ export default function Home() {
                     ● LIVE
                   </div>
                 </div>
-                <div className="flex gap-4 justify-center">
+                <div className="flex gap-4 justify-center flex-wrap">
                   <button
                     onClick={capturePhoto}
                     className="px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors font-semibold"
                   >
                     📸 Capture Photo
+                  </button>
+                  <button
+                    onClick={handleSwitchCamera}
+                    className="p-3 bg-gray-700 text-white rounded-full hover:bg-gray-600 transition-colors"
+                    title="Switch Camera"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h5M20 20v-5h-5M4 4l16 16m0-16L4 20" />
+                    </svg>
                   </button>
                   <button
                     onClick={stopCamera}
@@ -288,7 +319,6 @@ export default function Home() {
               )}
             </div>
 
-            {/* --- THIS IS THE ONLY SECTION THAT HAS BEEN MODIFIED --- */}
             <div className="mt-6">
                 {isLoading && (
                     <div className="text-center p-6 bg-blue-50 rounded-lg">
