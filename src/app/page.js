@@ -1,39 +1,57 @@
 "use client";
 import { useState, useRef } from "react";
 import { UserAuth } from "./context/AuthContext";
+import Link from "next/link";
 
 export default function Home() {
-  const { user, googleSignIn, logOut } = UserAuth();
-  const [isCamera, setIsCamera] = useState(false);
-  const [capturedImage, setCapturedImage] = useState(null);
-  const [uploadedImage, setUploadedImage] = useState(null);
-  
-  const [isLoading, setIsLoading] = useState(false);
-  const [analysisResult, setAnalysisResult] = useState(null);
-  const [error, setError] = useState(null);
-  
-  const videoRef = useRef(null);
-  const canvasRef = useRef(null);
-  const fileInputRef = useRef(null);
+    // --- State Management ---
+    const { user, googleSignIn, logOut } = UserAuth();
+    // Photo & Camera State
+    const [isCamera, setIsCamera] = useState(false);
+    const [capturedImage, setCapturedImage] = useState(null);
+    const [uploadedImage, setUploadedImage] = useState(null);
+    const [facingMode, setFacingMode] = useState("user");
+    // Audio State
+    const [isRecording, setIsRecording] = useState(false);
+    const [audioBlob, setAudioBlob] = useState(null);
+    const [audioUrl, setAudioUrl] = useState(null);
+    const mediaRecorderRef = useRef(null);
+    // App Logic State
+    const [isLoading, setIsLoading] = useState(false);
+    const [isLogging, setIsLogging] = useState(false);
+    const [analysisResult, setAnalysisResult] = useState(null);
+    const [error, setError] = useState(null);
+    // Refs
+    const videoRef = useRef(null);
+    const canvasRef = useRef(null);
+    const fileInputRef = useRef(null);
 
-  // State to track the current camera facing mode
-  const [facingMode, setFacingMode] = useState("user"); // "user" for front, "environment" for rear
+    // --- Helper & Reset Functions ---
+    const dataURLtoBlob = (dataurl) => {
+        if (!dataurl) return null;
+        const arr = dataurl.split(',');
+        if (arr.length < 2) return null;
+        const mimeMatch = arr[0].match(/:(.*?);/);
+        if (!mimeMatch || mimeMatch.length < 2) return null;
+        const mime = mimeMatch[1];
+        const bstr = atob(arr[1]);
+        let n = bstr.length;
+        const u8arr = new Uint8Array(n);
+        while(n--){ u8arr[n] = bstr.charCodeAt(n); }
+        return new Blob([u8arr], {type:mime});
+    };
 
-  const dataURLtoBlob = (dataurl) => {
-    if (!dataurl) return null;
-    const arr = dataurl.split(',');
-    if (arr.length < 2) return null;
-    const mimeMatch = arr[0].match(/:(.*?);/);
-    if (!mimeMatch || mimeMatch.length < 2) return null;
-    const mime = mimeMatch[1];
-    const bstr = atob(arr[1]);
-    let n = bstr.length;
-    const u8arr = new Uint8Array(n);
-    while(n--){
-        u8arr[n] = bstr.charCodeAt(n);
-    }
-    return new Blob([u8arr], {type:mime});
-  }
+    const resetState = () => {
+        setCapturedImage(null);
+        setUploadedImage(null);
+        setAnalysisResult(null);
+        setError(null);
+        setIsLoading(false);
+        setAudioBlob(null);
+        setAudioUrl(null);
+        setIsRecording(false);
+        if (fileInputRef.current) fileInputRef.current.value = "";
+    };
 
   const handleAnalyzeImage = async () => {
     const imageToAnalyze = capturedImage || uploadedImage;
@@ -167,6 +185,8 @@ export default function Home() {
       reader.onload = (e) => {
         setUploadedImage(e.target.result);
         setCapturedImage(null);
+        setAudioBlob(null);
+        setAudioUrl(null);
       };
       reader.readAsDataURL(file);
     } else {
@@ -185,63 +205,131 @@ export default function Home() {
     }
   };
 
-  return (
-    <main className="flex min-h-screen flex-col items-center justify-center p-6 bg-gray-50">
-      <h1 className="text-4xl font-bold mb-8 text-gray-800">Calories Counter</h1>
+  // --- UPDATED: The handleLogMeal function is completely changed ---
+  const handleLogMeal = async () => {
+    // Determine which image source to use
+    const imageToLog = capturedImage || uploadedImage;
 
-      {!user ? (
-        <button
-          onClick={handleSignIn}
-          className="px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
-        >
-          Sign in with Google
-        </button>
-      ) : (
-        <div className="w-full max-w-5xl"> 
-          <div className="text-center mb-8">
-            <p className="text-xl mb-4 text-gray-700">Welcome, {user.displayName}!</p>
-            <button
-              onClick={handleSignOut}
-              className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-100 transition-colors"
-            >
-              Sign Out
-            </button>
-          </div>
+    if (!analysisResult || !user || !imageToLog) {
+        alert("No analysis result, image, or user to log.");
+        return;
+    }
+    setIsLogging(true);
 
-          <div className="space-y-6">
-            <div className="flex flex-wrap gap-4 justify-center">
-              {!isCamera && (
-                <button
-                  onClick={() => startCamera(facingMode)}
-                  className="px-6 py-3 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors flex items-center gap-2"
-                >
-                  📷 Open Camera
-                </button>
+    // Convert the data URL (string) to a Blob (file-like object)
+    const imageBlob = dataURLtoBlob(imageToLog);
+    if (!imageBlob) {
+        alert("Could not process the image file.");
+        setIsLogging(false);
+        return;
+    }
+
+    // Use FormData to send both the image and the JSON data
+    const formData = new FormData();
+    formData.append('foodImage', imageBlob, 'meal.jpg');
+    formData.append('userId', user.uid);
+    formData.append('userEmail', user.email); // <-- ADD THIS LINE
+    formData.append('analysisResult', JSON.stringify(analysisResult));
+
+    try {
+        // Note: When sending FormData, you DO NOT set the 'Content-Type' header.
+        // The browser sets it automatically with the correct boundary.
+        const response = await fetch('https://calorie-counter-three-gamma.vercel.app/log-meal', {
+            method: 'POST',
+            body: formData, // Send the FormData object
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to log meal.');
+        }
+
+        alert('Meal logged successfully!');
+        setAnalysisResult(null);
+        setCapturedImage(null);
+    } catch (err) {
+        alert(`Error: ${err.message}`);
+    } finally {
+        setIsLogging(false);
+        resetAudio(); // Reset audio after logging
+    }
+};
+
+// Recording audio
+// --- Audio Handlers (NEW) ---
+const handleStartRecording = async () => {
+  resetState(); // Clear any photo state when starting audio
+  try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorderRef.current = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      const audioChunks = [];
+      mediaRecorderRef.current.ondataavailable = e => audioChunks.push(e.data);
+      mediaRecorderRef.current.onstop = () => {
+          const blob = new Blob(audioChunks, { type: 'audio/webm' });
+          setAudioBlob(blob);
+          setAudioUrl(URL.createObjectURL(blob));
+          setIsRecording(false);
+      };
+      mediaRecorderRef.current.start();
+      setIsRecording(true);
+  } catch (err) { console.error("Error starting recording:", err); alert("Could not access microphone."); }
+};
+
+const handleStopRecording = () => {
+  if (mediaRecorderRef.current) mediaRecorderRef.current.stop();
+};
+
+const handleLogAudio = async () => {
+  if (!audioBlob || !user) return;
+  setIsLogging(true);
+  const formData = new FormData();
+  formData.append('foodAudio', audioBlob, 'voice-note.webm');
+  formData.append('userId', user.uid);
+  formData.append('userEmail', user.email);
+  try {
+      const response = await fetch('https://calorie-counter-three-gamma.vercel.app/log-audio', { method: 'POST', body: formData });
+      if (!response.ok) throw new Error("Audio log failed");
+      const data = await response.json();
+      alert(data.message);
+      resetState();
+  } catch (err) { alert(`Error: ${err.message}`); } finally { setIsLogging(false); }
+};
+
+
+return (
+  <main className="flex min-h-screen flex-col items-center p-6 bg-gray-50">
+      <div className="w-full max-w-4xl"> {/* Adjusted max-width for a cleaner vertical look */}
+          <header className="flex justify-between items-center mb-8 w-full">
+              <h1 className="text-4xl font-bold text-gray-800">Calories Counter</h1>
+              {!user ? (
+                  <button onClick={handleSignIn} className="px-6 py-3 bg-blue-500 text-white rounded-lg">Sign In</button>
+              ) : (
+                  <div className="flex items-center gap-4">
+                      <Link href="/dashboard" className="text-blue-600 hover:underline font-medium">Dashboard</Link>
+                      <p className="text-gray-700">Hi, {user.displayName}!</p>
+                      <button onClick={handleSignOut} className="px-4 py-2 border rounded-lg">Sign Out</button>
+                  </div>
               )}
-
-              <label className="px-6 py-3 bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition-colors cursor-pointer flex items-center gap-2">
-                📁 Upload Photo
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  onChange={handleFileUpload}
-                  className="hidden"
-                />
-              </label>
-
-              {(capturedImage || uploadedImage) && (
-                <button
-                  onClick={resetImages}
-                  className="px-6 py-3 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors"
-                >
-                  🗑️ Clear Images
-                </button>
-              )}
-            </div>
-
-            {isCamera && (
-              <div className="text-center space-y-4 bg-black p-4 rounded-lg">
+          </header>
+          
+          {user && (
+              // --- UPDATED: This div now stacks its children vertically ---
+              <div className="flex flex-col items-center gap-8">
+                  
+                  {/* --- PHOTO LOGGING SECTION --- */}
+                  <div className="w-full space-y-6 p-6 border rounded-lg bg-white shadow-sm">
+                      <h2 className="text-2xl font-bold text-center text-gray-700">Log with Photo</h2>
+                      <div className="flex flex-wrap gap-4 justify-center">
+                          {!isCamera && <button onClick={() => startCamera(facingMode)} className="px-6 py-3 bg-green-500 text-white rounded-lg flex items-center gap-2">📷 Open Camera</button>}
+                          <label className="px-6 py-3 bg-purple-500 text-white rounded-lg cursor-pointer flex items-center gap-2">
+                              📁 Upload Photo
+                              <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileUpload} className="hidden"/>
+                          </label>
+                          {(capturedImage || uploadedImage) && <button onClick={resetState} className="px-6 py-3 bg-red-500 text-white rounded-lg">🗑️ Clear</button>}
+                      </div>
+                      
+                      {isCamera && (
+                        /* Your existing camera view JSX */
+                        <div className="text-center space-y-4 bg-black p-4 rounded-lg">
                 <div className="relative bg-gray-900 rounded-lg overflow-hidden">
                   <video
                     ref={videoRef}
@@ -285,113 +373,64 @@ export default function Home() {
                   </button>
                 </div>
               </div>
-            )}
+                        )}
+                      <canvas ref={canvasRef} className="hidden" />
 
-            <canvas ref={canvasRef} className="hidden" />
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {capturedImage && (
-                <div className="text-center space-y-3">
-                  <h3 className="text-lg font-semibold mb-2">Captured Photo</h3>
-                  <img
-                    src={capturedImage}
-                    alt="Captured"
-                    className="w-full max-w-sm mx-auto rounded-lg border-2 border-green-300"
-                  />
-                  <button onClick={handleAnalyzeImage} className="px-6 py-2 bg-teal-500 text-white rounded-lg hover:bg-teal-600 transition-colors">
-                    🔍 Use this Photo
-                  </button>
-                </div>
-              )}
-
-              {uploadedImage && (
-                <div className="text-center space-y-3">
-                  <h3 className="text-lg font-semibold mb-2">Uploaded Photo</h3>
-                  <img
-                    src={uploadedImage}
-                    alt="Uploaded"
-                    className="w-full max-w-sm mx-auto rounded-lg border-2 border-purple-300"
-                  />
-                   <button onClick={handleAnalyzeImage} className="px-6 py-2 bg-teal-500 text-white rounded-lg hover:bg-teal-600 transition-colors">
-                    🔍 Use this Photo
-                  </button>
-                </div>
-              )}
-            </div>
-
-            <div className="mt-6">
-                {isLoading && (
-                    <div className="text-center p-6 bg-blue-50 rounded-lg">
-                        <p className="text-blue-700 animate-pulse">
-                            🔍 Analyzing your food, please wait...
-                        </p>
-                    </div>
-                )}
-
-                {error && (
-                    <div className="text-center p-6 bg-red-100 rounded-lg">
-                        <p className="text-red-700 font-semibold">Error</p>
-                        <p className="text-red-600">{error}</p>
-                    </div>
-                )}
-                
-                {analysisResult && (
-                  <div className="p-6 bg-white rounded-lg border border-gray-200 shadow-md">
-                    <h2 className="text-3xl font-bold text-center mb-6 text-gray-800">Analysis Result</h2>
-                    
-                    <div className="overflow-x-auto">
-                      <table className="min-w-full divide-y divide-gray-200">
-                        <thead className="bg-gray-50">
-                          <tr>
-                            <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Food Item</th>
-                            <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Calories</th>
-                            <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Serving Size</th>
-                            <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nutrition Details</th>
-                          </tr>
-                        </thead>
-                        <tbody className="bg-white divide-y divide-gray-200">
-                          {analysisResult.identifiedFoods.map((food, index) => (
-                            <tr key={index}>
-                              <td className="px-6 py-4 whitespace-nowrap">
-                                <div className="text-sm font-medium text-gray-900 capitalize">{food.name}</div>
-                                <div className="text-xs text-gray-500 capitalize">{food.source}</div>
-                              </td>
-                              <td className="px-6 py-4 whitespace-nowrap">
-                                <div className="text-sm text-gray-900">{food.calories} kcal</div>
-                              </td>
-                              <td className="px-6 py-4 whitespace-nowrap">
-                                <div className="text-sm text-gray-900">{food.serving_size}</div>
-                              </td>
-                              <td className="px-6 py-4">
-                                <div className="text-sm text-gray-500">
-                                  <div><strong>Protein:</strong> {food?.nutrition?.protein}g</div>
-                                  <div><strong>Fat:</strong> {food?.nutrition?.fat}g</div>
-                                  <div><strong>Carbs:</strong> {food?.nutrition?.carbs}g</div>
-                                  <div><strong>Fiber:</strong> {food?.nutrition?.fiber}g</div>
-                                  <div><strong>Sugar:</strong> {food?.nutrition?.sugar}g</div>
-                                </div>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-
-                    <div className="mt-8 text-center p-4 bg-green-100 rounded-lg">
-                      <p className="text-lg text-gray-600">Total Estimated Calories</p>
-                      <p className="text-4xl font-bold text-green-700">{analysisResult.totalEstimatedCalories} kcal</p>
-                    </div>
-
-                    {analysisResult.note && (
-                      <p className="text-center text-xs text-gray-400 mt-6">{analysisResult.note}</p>
-                    )}
+                      {(capturedImage || uploadedImage) && (
+                          <div className="text-center space-y-3">
+                              <img src={capturedImage || uploadedImage} alt="Selected to analyze" className="w-full max-w-sm mx-auto rounded-lg" />
+                              {!analysisResult && <button onClick={handleAnalyzeImage} disabled={isLoading} className="px-6 py-2 bg-blue-500 text-white rounded-lg">{isLoading ? 'Analyzing...' : '🔍 Analyze Photo'}</button>}
+                          </div>
+                      )}
+                      {isLoading && <p className="text-center animate-pulse">Analyzing...</p>}
+                      {error && <p className="text-center text-red-500">Error: {error}</p>}
+                      
+                      {analysisResult && (
+                          <div>
+                              <h3 className="text-xl font-semibold text-center mb-2">Analysis Result</h3>
+                              <table className="min-w-full divide-y divide-gray-200">
+                                  <thead className="bg-gray-50"><tr><th className="px-4 py-2 text-left">Food</th><th className="px-4 py-2 text-left">Calories</th></tr></thead>
+                                  <tbody className="bg-white divide-y divide-gray-200">
+                                      {analysisResult.identifiedFoods.map((food, index) => (<tr key={index}><td className="px-4 py-2 capitalize">{food.name}</td><td className="px-4 py-2">{food.calories} kcal</td></tr>))}
+                                  </tbody>
+                              </table>
+                              <div className="mt-4 text-center p-2 bg-green-100 rounded-lg">
+                                  <p className="font-bold text-green-700">Total: {analysisResult.totalEstimatedCalories} kcal</p>
+                              </div>
+                              <div className="text-center mt-4">
+                                  <button onClick={handleLogMeal} disabled={isLogging} className="px-8 py-3 bg-teal-500 text-white rounded-lg">{isLogging ? 'Logging...' : '✔ Log This Meal'}</button>
+                              </div>
+                          </div>
+                      )}
                   </div>
-                )}
-            </div>
 
-          </div>
-        </div>
-      )}
-    </main>
-  );
+                  {/* --- AUDIO LOGGING SECTION --- */}
+                  <div className="w-full space-y-6 p-6 border rounded-lg bg-white shadow-sm">
+                      <h2 className="text-2xl font-bold text-center text-gray-700">Log with Voice Note</h2>
+                      <div className="flex items-center gap-4 justify-center">
+                          {!isRecording ? (
+                              <button onClick={handleStartRecording} className="px-6 py-3 bg-red-500 text-white rounded-lg">🎤 Start Recording</button>
+                          ) : (
+                              <button onClick={handleStopRecording} className="px-6 py-3 bg-red-700 text-white rounded-lg animate-pulse">■ Stop Recording</button>
+                          )}
+                      </div>
+                      {audioUrl && (
+                          <div className="text-center mt-4 space-y-3">
+                              <p className="font-medium">Your Voice Note:</p>
+                              <audio src={audioUrl} controls className="w-full" />
+                          </div>
+                      )}
+                      {audioBlob && (
+                          <div className="text-center mt-4">
+                              <button onClick={handleLogAudio} disabled={isLogging} className="px-8 py-3 bg-indigo-500 text-white rounded-lg">
+                                  {isLogging ? 'Logging...' : '✔ Log Voice Note'}
+                              </button>
+                          </div>
+                      )}
+                  </div>
+              </div>
+          )}
+      </div>
+  </main>
+);
 }
