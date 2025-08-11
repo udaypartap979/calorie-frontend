@@ -250,7 +250,7 @@ export default function Home() {
         alert(`Error: ${err.message}`);
     } finally {
         setIsLogging(false);
-        resetAudio(); // Reset audio after logging
+        // resetAudio(); // Reset audio after logging
     }
 };
 
